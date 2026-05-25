@@ -2,10 +2,34 @@
 
 import { useState } from "react";
 
+const days = [
+  "PON",
+  "UTO",
+  "STR",
+  "STV",
+  "PIA",
+  "SOB",
+  "NED"
+];
+
+function today() {
+  const d = new Date().getDay();
+
+  if (d === 1) return "PON";
+  if (d === 2) return "UTO";
+  if (d === 3) return "STR";
+  if (d === 4) return "STV";
+  if (d === 5) return "PIA";
+  if (d === 6) return "SOB";
+
+  return "NED";
+}
+
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [day, setDay] = useState(today());
 
   async function run() {
     if (!file) return;
@@ -13,39 +37,72 @@ export default function Home() {
     setLoading(true);
 
     const form = new FormData();
-    form.append("image", file);
 
-    const res = await fetch("/api/extract-order", {
-      method: "POST",
-      body: form
-    });
+    form.append("image", file);
+    form.append("day", day);
+
+    const res = await fetch(
+      "/api/extract-order",
+      {
+        method: "POST",
+        body: form
+      }
+    );
 
     const json = await res.json();
 
     setData(json);
+
     setLoading(false);
   }
 
   function copyCSV() {
-    navigator.clipboard.writeText(data?.csv || "");
+    navigator.clipboard.writeText(
+      data?.csv || ""
+    );
+
     alert("CSV skopírované");
   }
 
   return (
     <main
       style={{
+        minHeight: "100vh",
         background: "#000",
         color: "#fff",
-        minHeight: "100vh",
         padding: 30
       }}
     >
       <h1>🍕 Gatto Objednávky</h1>
 
+      <p>Čítaný deň:</p>
+
+      <select
+        value={day}
+        onChange={(e) =>
+          setDay(e.target.value)
+        }
+      >
+        {days.map((d) => (
+          <option
+            key={d}
+            value={d}
+          >
+            {d}
+          </option>
+        ))}
+      </select>
+
+      <br />
+      <br />
+
       <input
         type="file"
         onChange={(e) =>
-          setFile(e.target.files?.[0] || null)
+          setFile(
+            e.target.files?.[0] ||
+            null
+          )
         }
       />
 
@@ -56,52 +113,23 @@ export default function Home() {
         onClick={run}
         style={{
           width: "100%",
-          padding: 20
+          padding: 18
         }}
       >
-        {loading ? "Spracovávam…" : "Spracovať fotku"}
+        {loading
+          ? "Spracovávam..."
+          : "Spracovať fotku"}
       </button>
 
-      {!!data?.items?.length && (
+      {!!data?.csv && (
         <>
           <br />
-
-          <table
-            style={{
-              width: "100%",
-              marginTop: 30
-            }}
-          >
-            <thead>
-              <tr>
-                <th>Produkt</th>
-                <th>Kód</th>
-                <th>Množstvo</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {data.items.map(
-                (i: any, index: number) => (
-                  <tr key={index}>
-                    <td>{i.produkt}</td>
-                    <td>{i.kod}</td>
-                    <td>
-                      {i.mnozstvo}
-                      {i.jednotka}
-                    </td>
-                  </tr>
-                )
-              )}
-            </tbody>
-          </table>
-
           <br />
 
           <textarea
+            rows={10}
             value={data.csv}
             readOnly
-            rows={8}
             style={{
               width: "100%"
             }}
@@ -109,7 +137,9 @@ export default function Home() {
 
           <br />
 
-          <button onClick={copyCSV}>
+          <button
+            onClick={copyCSV}
+          >
             Kopírovať CSV
           </button>
         </>
