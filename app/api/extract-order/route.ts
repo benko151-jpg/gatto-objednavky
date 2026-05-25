@@ -22,7 +22,7 @@ function normalizeDay(value: string) {
   if (v.includes("PON")) return "PON";
   if (v.includes("UTO")) return "UTO";
   if (v.includes("STR")) return "STR";
-  if (v.includes("STV") || v.includes("STV")) return "STV";
+  if (v.includes("STV") || v.includes("ST")) return "STV";
   if (v.includes("PIA")) return "PIA";
   if (v.includes("SOB")) return "SOB";
   if (v.includes("NED")) return "NED";
@@ -117,8 +117,6 @@ export async function POST(req: Request) {
     const image = form.get("image") as File | null;
     const selectedDay = normalizeDay(String(form.get("day") || ""));
 
-    console.log("SELECTED_DAY =", selectedDay);
-
     if (!image) {
       return Response.json({
         ok: false,
@@ -146,46 +144,84 @@ export async function POST(req: Request) {
             {
               type: "text",
               text: `
-Si OCR pre kuchynské objednávky.
+Si extrémne presný OCR analyzátor objednávkových hárkov.
 
-Na fotke je objednávkový hárok tabuľka so stĺpcami:
-názov | dodávateľ | kód | PON | UTO | STR | ŠTV | PIA | SOB | NED
+Na obrázku je tabuľka.
 
-ZVOLENÝ DEŇ: ${selectedDay}
+Stĺpce dní sú VŽDY v poradí:
 
-Najdôležitejšie pravidlo:
-ČÍTAJ IBA STĹPEC ${selectedDay}.
+PON | UTO | STR | ŠTV | PIA | SOB | NED
 
-Postup:
-1. Nájdi hlavičku dní: PON, UTO, STR, ŠTV, PIA, SOB, NED.
-2. Urči, kde je stĺpec ${selectedDay}.
-3. Čítaj iba ručne perom dopísané hodnoty vo vnútri stĺpca ${selectedDay}.
-4. Ak je v stĺpci ${selectedDay} prázdno, vráť [].
-5. Hodnoty v iných stĺpcoch ignoruj.
+Vybraný deň je:
 
-Vráť iba čistý JSON array.
+${selectedDay}
+
+KRITICKÉ PRAVIDLÁ:
+
+1.
+NAJPRV si nájdi presné hranice stĺpca ${selectedDay}
+medzi dvoma zvislými čiarami.
+
+2.
+NEČÍTAJ celý hárok.
+
+3.
+ČÍTAJ LEN ručne dopísané hodnoty,
+ktoré fyzicky ležia vo vnútri stĺpca ${selectedDay}.
+
+4.
+Všetky zápisy mimo stĺpca ${selectedDay}
+musíš ignorovať.
+
+5.
+Nikdy nepresúvaj hodnoty medzi dňami.
+
+Príklad:
+Ak je vybraný UTO:
+
+❌ neber nič z PON
+❌ neber nič zo STR
+❌ neber nič zo ŠTV
+
+ber LEN to čo je pod hlavičkou UTO
+
+6.
+Ak v stĺpci ${selectedDay}
+neexistuje ručne dopísaná hodnota:
+
+vráť presne:
+
+[]
+
+7.
+Pre každú nájdenú položku:
+
+- produkt = názov riadku
+- kod_z_harku = vytlačený kód v riadku
+- mnozstvo = ručne dopísaná hodnota
 
 Formát:
+
 [
-  {
-    "den": "${selectedDay}",
-    "produkt": "Šunka od kosti",
-    "kod_z_harku": "77857",
-    "mnozstvo": "5,5KG"
-  }
+ {
+   "den":"${selectedDay}",
+   "produkt":"Šunka od kosti",
+   "kod_z_harku":"77857",
+   "mnozstvo":"5,5KG"
+ }
 ]
 
-Pravidlá:
-- den musí byť vždy fyzický stĺpec, kde je hodnota napísaná
-- ak je hodnota v PON a zvolený deň je UTO, NEVRACAJ ju
-- ak je hodnota v STR a zvolený deň je UTO, NEVRACAJ ju
-- nikdy nepresúvaj hodnoty medzi dňami
-- čítaj iba ručne dopísaný text
-- názov produktu ber z ľavého riadku
-- kód produktu ber z rovnakého riadku, ak je vytlačený
-- 5,5KG nechaj ako 5,5KG
-- 1BAL nechaj ako 1BAL
-- 20KS nechaj ako 20KS
+PRÍSNY TEST PRED ODPOVEĎOU:
+
+Skontroluj:
+"Je táto hodnota naozaj fyzicky pod hlavičkou ${selectedDay}?"
+
+Ak nie:
+NEVRACAJ JU.
+
+Výstup:
+IBA JSON.
+Žiadny text.
 `
             },
             {
@@ -202,15 +238,10 @@ Pravidlá:
     const raw = ai.choices[0].message.content || "";
     const parsed = extractJson(raw);
 
-    console.log("RAW_AI =", raw);
-    console.log("PARSED =", parsed);
-
     const filtered = parsed.filter((item: any) => {
       const itemDay = normalizeDay(String(item.den || ""));
       return itemDay === selectedDay;
     });
-
-    console.log("FILTERED =", filtered);
 
     const products = loadProducts();
 
@@ -224,7 +255,8 @@ Pravidlá:
       let matched = null;
 
       if (kodFromSheet) {
-        matched = products.find((p: any) => p.kod === kodFromSheet) || null;
+        matched =
+          products.find((p: any) => p.kod === kodFromSheet) || null;
       }
 
       if (!matched) {
@@ -253,22 +285,15 @@ Pravidlá:
       .filter(Boolean)
       .join("\n");
 
-    console.log("ITEMS =", items);
-    console.log("CSV =", csv);
-
     return Response.json({
       ok: true,
       selectedDay,
       raw,
-      parsed,
-      filtered,
       items,
       csv
     });
 
   } catch (e: any) {
-    console.log("ERROR =", String(e));
-
     return Response.json({
       ok: false,
       error: String(e)
