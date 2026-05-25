@@ -7,7 +7,7 @@ const client = new OpenAI({
 });
 
 function normalizeText(value: string) {
-  return value
+  return String(value || "")
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -19,13 +19,15 @@ function normalizeText(value: string) {
 function normalizeQty(value: string) {
   const raw = String(value || "").trim().toUpperCase();
   const number = raw.match(/[0-9]+([,.][0-9]+)?/)?.[0]?.replace(",", ".") || "";
-  const unit =
+
+  const jednotka =
     raw.includes("KG") ? "kg" :
     raw.includes("KS") ? "ks" :
     raw.includes("BAL") ? "bal" :
+    raw.includes("L") ? "l" :
     "";
 
-  return { mnozstvo: number, jednotka: unit };
+  return { mnozstvo: number, jednotka };
 }
 
 function loadProducts() {
@@ -39,6 +41,7 @@ function loadProducts() {
     .map((line) => {
       const [kod, ...nameParts] = line.split(/\s+/);
       const nazov = nameParts.join(" ");
+
       return {
         kod,
         nazov,
@@ -50,19 +53,23 @@ function loadProducts() {
 function findProduct(productName: string, products: any[]) {
   const q = normalizeText(productName);
 
+  if (!q) return null;
+
   let best = null;
   let bestScore = 0;
 
   for (const p of products) {
     let score = 0;
 
-    const words = q.split(" ").filter(Boolean);
+    if (p.search.includes(q)) score += 10;
+
+    const words = q
+      .split(" ")
+      .filter((w) => w.length > 2);
 
     for (const w of words) {
-      if (p.search.includes(w)) score += 1;
+      if (p.search.includes(w)) score += 2;
     }
-
-    if (p.search.includes(q)) score += 5;
 
     if (score > bestScore) {
       bestScore = score;
@@ -75,10 +82,30 @@ function findProduct(productName: string, products: any[]) {
   return best;
 }
 
+function extractJson(raw: string) {
+  const text = String(raw || "")
+    .replace(/```json/g, "")
+    .replace(/```/g, "")
+    .trim();
+
+  const start = text.indexOf("[");
+  const end = text.lastIndexOf("]");
+
+  if (start === -1 || end === -1) return [];
+
+  const jsonText = text.slice(start, end + 1);
+
+  try {
+    return JSON.parse(jsonText);
+  } catch {
+    return [];
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const form = await req.formData();
-    const image = form.get("image") as File;
+    const image = form.get("image") as File | null;
 
     if (!image) {
       return Response.json({
@@ -92,6 +119,7 @@ export async function POST(req: Request) {
 
     const ai = await client.chat.completions.create({
       model: "gpt-4.1-mini",
+      temperature: 0,
       messages: [
         {
           role: "user",
@@ -101,32 +129,36 @@ export async function POST(req: Request) {
               text: `
 Si OCR pre kuchynské objednávky.
 
-Z fotky objednávkového hárku vytiahni iba ručne dopísané položky.
+Na fotke je objednávkový hárok s tabuľkou:
+produkt / dodávateľ / kód / dni v týždni.
 
-Vráť iba čistý JSON, nič iné.
+Úloha:
+- nájdi iba bunky, kde je ručne perom dopísaná hodnota
+- ignoruj prázdne bunky
+- ku každej ručne dopísanej hodnote zisti názov produktu z ľavého riadku
+- vráť iba čistý JSON array
+- nič nevysvetľuj
 
 Formát:
 [
   {
-    "produkt": "",
-    "mnozstvo": ""
+    "produkt": "Šunka od kosti",
+    "mnozstvo": "5,5KG"
   }
 ]
 
 Pravidlá:
-- ignoruj prázdne bunky
-- čítaj iba ručne dopísané hodnoty
-- produkt ber z názvu riadku
-- 3,5KG nechaj ako 3,5KG
+- 5,5KG nechaj ako 5,5KG
 - 1BAL nechaj ako 1BAL
 - 20KS nechaj ako 20KS
-- ak si nie si istý, produkt aj množstvo vynechaj
+- čítaj len modrý/ručný text, nie vytlačený text
+- ak produkt nevieš bezpečne spojiť s riadkom, vynechaj ho
 `
             },
             {
               type: "image_url",
               image_url: {
-                url: `data:${image.type};base64,${base64}`
+                url: `data:${image.type || "image/jpeg"};base64,${base64}`
               }
             }
           ]
@@ -134,19 +166,11 @@ Pravidlá:
       ]
     });
 
-    const raw = ai.choices[0].message.content || "[]";
-
-    let parsed: any[] = [];
-
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      parsed = [];
-    }
-
+    const raw = ai.choices[0].message.content || "";
+    const parsed = extractJson(raw);
     const products = loadProducts();
 
-    const items = parsed.map((item) => {
+    const items = parsed.map((item: any) => {
       const matched = findProduct(item.produkt || "", products);
       const qty = normalizeQty(item.mnozstvo || "");
 
@@ -156,17 +180,21 @@ Pravidlá:
         kod: matched?.kod || "",
         mnozstvo: qty.mnozstvo,
         jednotka: qty.jednotka,
-        csv: matched?.kod && qty.mnozstvo ? `${matched.kod};${qty.mnozstvo};` : ""
+        csv:
+          matched?.kod && qty.mnozstvo
+            ? `${matched.kod};${qty.mnozstvo};`
+            : ""
       };
     });
 
     const csv = items
-      .map((item) => item.csv)
+      .map((item: any) => item.csv)
       .filter(Boolean)
       .join("\n");
 
     return Response.json({
       ok: true,
+      raw,
       items,
       csv
     });
