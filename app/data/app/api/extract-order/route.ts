@@ -10,7 +10,10 @@ export async function POST(req: Request) {
     const image = form.get("image") as File | null;
 
     if (!image) {
-      return Response.json({ ok: false, error: "Chýba fotka" }, { status: 400 });
+      return Response.json(
+        { ok: false, error: "Chýba fotka" },
+        { status: 400 }
+      );
     }
 
     const bytes = await image.arrayBuffer();
@@ -33,7 +36,7 @@ Toto je objednávkový hárok kuchyne.
 - ignoruj prázdne bunky
 - nájdi produkt z riadku
 - ak je pri produkte kód, použi ho
-- vráť iba JSON
+- vráť iba čistý JSON, bez komentára
 
 Formát:
 [
@@ -56,23 +59,27 @@ Pravidlá:
             },
             {
               type: "input_image",
-              image_url: `data:${mime};base64,${base64}`
+              image_url: `data:${mime};base64,${base64}`,
+              detail: "high"
             }
           ]
         }
       ]
     });
 
-    const text = response.output_text;
-
     return Response.json({
       ok: true,
-      raw: text
+      raw: response.output_text
     });
   } catch (error) {
     return Response.json(
-      { ok: false, error: "AI spracovanie zlyhalo" },
-      { status: 500 }
+      {
+        ok: false,
+        error: "AI spracovanie zlyhalo"
+      },
+      {
+        status: 500
+      }
     );
   }
 }
