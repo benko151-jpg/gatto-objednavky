@@ -16,6 +16,20 @@ function normalizeText(value: string) {
     .trim();
 }
 
+function normalizeDay(value: string) {
+  const v = normalizeText(value).toUpperCase();
+
+  if (v.includes("PON")) return "PON";
+  if (v.includes("UTO") || v.includes("UT")) return "UTO";
+  if (v.includes("STR")) return "STR";
+  if (v.includes("STV") || v.includes("ŠTV")) return "STV";
+  if (v.includes("PIA")) return "PIA";
+  if (v.includes("SOB")) return "SOB";
+  if (v.includes("NED")) return "NED";
+
+  return "";
+}
+
 function normalizeQty(value: string) {
   const raw = String(value || "").trim().toUpperCase();
   const number =
@@ -107,12 +121,19 @@ export async function POST(req: Request) {
   try {
     const form = await req.formData();
     const image = form.get("image") as File | null;
-    const day = String(form.get("day") || "AUTO");
+    const selectedDay = normalizeDay(String(form.get("day") || ""));
 
     if (!image) {
       return Response.json({
         ok: false,
         error: "NO_IMAGE"
+      });
+    }
+
+    if (!selectedDay) {
+      return Response.json({
+        ok: false,
+        error: "NO_DAY_SELECTED"
       });
     }
 
@@ -134,13 +155,12 @@ Si OCR pre kuchynské objednávky.
 Na fotke je objednávkový hárok s tabuľkou:
 produkt / dodávateľ / kód / PON / UTO / STR / STV / PIA / SOB / NED.
 
-Zvolený deň je: ${day}
+Zvolený deň je: ${selectedDay}
 
 Úloha:
-- čítaj IBA stĺpec zvoleného dňa: ${day}
-- ignoruj všetky ostatné dni
-- nájdi iba bunky v stĺpci ${day}, kde je ručne perom dopísaná hodnota
-- ku každej hodnote zisti názov produktu z ľavého riadku
+- nájdi všetky ručne perom dopísané hodnoty v tabuľke
+- ku každej hodnote urč presný stĺpec/deň, v ktorom sa nachádza
+- ku každej hodnote urč názov produktu z ľavého riadku
 - ak je na rovnakom riadku vytlačený číselný kód produktu, zahrň ho ako "kod_z_harku"
 - vráť iba čistý JSON array
 - nič nevysvetľuj
@@ -148,20 +168,25 @@ Zvolený deň je: ${day}
 Formát:
 [
   {
+    "den": "PON",
     "produkt": "Šunka od kosti",
     "kod_z_harku": "77857",
     "mnozstvo": "5,5KG"
   }
 ]
 
-Pravidlá:
+Kritické pravidlá:
+- pole "den" musí byť presný stĺpec, kde je ručný zápis fyzicky napísaný
+- ak je zápis v stĺpci PON, den musí byť "PON"
+- ak je zápis v stĺpci UTO, den musí byť "UTO"
+- NEpresúvaj hodnotu do zvoleného dňa
+- NEvracaj hodnoty z iného stĺpca ako ${selectedDay}
+- ak zvolený stĺpec ${selectedDay} nemá žiadne ručné hodnoty, vráť []
+- čítaj len ručne dopísaný text, nie vytlačené položky
+- ignoruj vytlačené texty okrem názvu produktu a kódu
 - 5,5KG nechaj ako 5,5KG
 - 1BAL nechaj ako 1BAL
 - 20KS nechaj ako 20KS
-- čítaj len ručne dopísaný text v stĺpci ${day}
-- ignoruj vytlačené texty v tabuľke okrem názvu produktu a kódu
-- ak je hodnota mimo stĺpca ${day}, vynechaj ju
-- ak si nie si istý, vynechaj položku
 `
             },
             {
@@ -177,9 +202,15 @@ Pravidlá:
 
     const raw = ai.choices[0].message.content || "";
     const parsed = extractJson(raw);
+
+    const filtered = parsed.filter((item: any) => {
+      const itemDay = normalizeDay(String(item.den || ""));
+      return itemDay === selectedDay;
+    });
+
     const products = loadProducts();
 
-    const items = parsed.map((item: any) => {
+    const items = filtered.map((item: any) => {
       const qty = normalizeQty(item.mnozstvo || "");
 
       const kodFromSheet =
@@ -201,6 +232,7 @@ Pravidlá:
       const finalKod = kodFromSheet || matched?.kod || "";
 
       return {
+        den: normalizeDay(item.den || ""),
         produkt_ai: item.produkt || "",
         produkt: matched?.nazov || item.produkt || "",
         kod: finalKod,
@@ -221,7 +253,7 @@ Pravidlá:
 
     return Response.json({
       ok: true,
-      day,
+      selectedDay,
       raw,
       items,
       csv
