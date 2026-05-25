@@ -18,7 +18,8 @@ function normalizeText(value: string) {
 
 function normalizeQty(value: string) {
   const raw = String(value || "").trim().toUpperCase();
-  const number = raw.match(/[0-9]+([,.][0-9]+)?/)?.[0]?.replace(",", ".") || "";
+  const number =
+    raw.match(/[0-9]+([,.][0-9]+)?/)?.[0]?.replace(",", ".") || "";
 
   const jednotka =
     raw.includes("KG") ? "kg" :
@@ -106,6 +107,7 @@ export async function POST(req: Request) {
   try {
     const form = await req.formData();
     const image = form.get("image") as File | null;
+    const day = String(form.get("day") || "AUTO");
 
     if (!image) {
       return Response.json({
@@ -130,12 +132,16 @@ export async function POST(req: Request) {
 Si OCR pre kuchynské objednávky.
 
 Na fotke je objednávkový hárok s tabuľkou:
-produkt / dodávateľ / kód / dni v týždni.
+produkt / dodávateľ / kód / PON / UTO / STR / STV / PIA / SOB / NED.
+
+Zvolený deň je: ${day}
 
 Úloha:
-- nájdi iba bunky, kde je ručne perom dopísaná hodnota
-- ignoruj prázdne bunky
-- ku každej ručne dopísanej hodnote zisti názov produktu z ľavého riadku
+- čítaj IBA stĺpec zvoleného dňa: ${day}
+- ignoruj všetky ostatné dni
+- nájdi iba bunky v stĺpci ${day}, kde je ručne perom dopísaná hodnota
+- ku každej hodnote zisti názov produktu z ľavého riadku
+- ak je na rovnakom riadku vytlačený číselný kód produktu, zahrň ho ako "kod_z_harku"
 - vráť iba čistý JSON array
 - nič nevysvetľuj
 
@@ -143,6 +149,7 @@ Formát:
 [
   {
     "produkt": "Šunka od kosti",
+    "kod_z_harku": "77857",
     "mnozstvo": "5,5KG"
   }
 ]
@@ -151,8 +158,10 @@ Pravidlá:
 - 5,5KG nechaj ako 5,5KG
 - 1BAL nechaj ako 1BAL
 - 20KS nechaj ako 20KS
-- čítaj len modrý/ručný text, nie vytlačený text
-- ak produkt nevieš bezpečne spojiť s riadkom, vynechaj ho
+- čítaj len ručne dopísaný text v stĺpci ${day}
+- ignoruj vytlačené texty v tabuľke okrem názvu produktu a kódu
+- ak je hodnota mimo stĺpca ${day}, vynechaj ju
+- ak si nie si istý, vynechaj položku
 `
             },
             {
@@ -171,18 +180,36 @@ Pravidlá:
     const products = loadProducts();
 
     const items = parsed.map((item: any) => {
-      const matched = findProduct(item.produkt || "", products);
       const qty = normalizeQty(item.mnozstvo || "");
+
+      const kodFromSheet =
+        String(item.kod_z_harku || "")
+          .replace(/\D/g, "")
+          .trim();
+
+      let matched = null;
+
+      if (kodFromSheet) {
+        matched =
+          products.find((p: any) => p.kod === kodFromSheet) || null;
+      }
+
+      if (!matched) {
+        matched = findProduct(item.produkt || "", products);
+      }
+
+      const finalKod = kodFromSheet || matched?.kod || "";
 
       return {
         produkt_ai: item.produkt || "",
         produkt: matched?.nazov || item.produkt || "",
-        kod: matched?.kod || "",
+        kod: finalKod,
+        kod_z_harku: kodFromSheet,
         mnozstvo: qty.mnozstvo,
         jednotka: qty.jednotka,
         csv:
-          matched?.kod && qty.mnozstvo
-            ? `${matched.kod};${qty.mnozstvo};`
+          finalKod && qty.mnozstvo
+            ? `${finalKod};${qty.mnozstvo};`
             : ""
       };
     });
@@ -194,6 +221,7 @@ Pravidlá:
 
     return Response.json({
       ok: true,
+      day,
       raw,
       items,
       csv
