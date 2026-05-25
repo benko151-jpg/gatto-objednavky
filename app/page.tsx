@@ -2,91 +2,117 @@
 
 import { useState } from "react";
 
-export default function Page() {
+export default function Home() {
   const [file, setFile] = useState<File | null>(null);
-  const [result, setResult] = useState("");
+  const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
 
-  async function processImage() {
+  async function run() {
     if (!file) return;
 
     setLoading(true);
 
-    try {
-      const form = new FormData();
-      form.append("image", file);
+    const form = new FormData();
+    form.append("image", file);
 
-      const res = await fetch("/api/extract-order", {
-        method: "POST",
-        body: form
-      });
+    const res = await fetch("/api/extract-order", {
+      method: "POST",
+      body: form
+    });
 
-      const data = await res.json();
+    const json = await res.json();
 
-      setResult(JSON.stringify(data, null, 2));
-    } catch {
-      setResult("chyba");
-    }
-
+    setData(json);
     setLoading(false);
+  }
+
+  function copyCSV() {
+    navigator.clipboard.writeText(data?.csv || "");
+    alert("CSV skopírované");
   }
 
   return (
     <main
       style={{
+        background: "#000",
+        color: "#fff",
         minHeight: "100vh",
-        background: "#0b0b0b",
-        color: "white",
-        padding: 20,
-        fontFamily: "sans-serif"
+        padding: 30
       }}
     >
       <h1>🍕 Gatto Objednávky</h1>
 
-      <p>Foto → AI → CSV</p>
+      <input
+        type="file"
+        onChange={(e) =>
+          setFile(e.target.files?.[0] || null)
+        }
+      />
 
-      <div
+      <br />
+      <br />
+
+      <button
+        onClick={run}
         style={{
-          background: "#171717",
-          borderRadius: 16,
-          padding: 20,
-          marginTop: 20
+          width: "100%",
+          padding: 20
         }}
       >
-        <input
-          type="file"
-          accept="image/*"
-          capture="environment"
-          onChange={(e) =>
-            setFile(e.target.files?.[0] || null)
-          }
-        />
+        {loading ? "Spracovávam…" : "Spracovať fotku"}
+      </button>
 
-        <button
-          onClick={processImage}
-          disabled={!file || loading}
-          style={{
-            marginTop: 20,
-            width: "100%",
-            padding: 16,
-            borderRadius: 12
-          }}
-        >
-          {loading
-            ? "Spracovávam…"
-            : "Spracovať fotku"}
-        </button>
-      </div>
+      {!!data?.items?.length && (
+        <>
+          <br />
 
-      {result && (
-        <pre
-          style={{
-            marginTop: 20,
-            whiteSpace: "pre-wrap"
-          }}
-        >
-          {result}
-        </pre>
+          <table
+            style={{
+              width: "100%",
+              marginTop: 30
+            }}
+          >
+            <thead>
+              <tr>
+                <th>Produkt</th>
+                <th>Kód</th>
+                <th>Množstvo</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {data.items.map(
+                (i: any, index: number) => (
+                  <tr key={index}>
+                    <td>{i.produkt}</td>
+                    <td>{i.kod}</td>
+                    <td>
+                      {i.mnozstvo}
+                      {i.jednotka}
+                    </td>
+                  </tr>
+                )
+              )}
+            </tbody>
+          </table>
+
+          <br />
+
+          <textarea
+            value={data.csv}
+            readOnly
+            rows={8}
+            style={{
+              width: "100%"
+            }}
+          />
+
+          <br />
+
+          <button onClick={copyCSV}>
+            Kopírovať CSV
+          </button>
+        </>
       )}
     </main>
   );
