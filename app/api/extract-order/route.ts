@@ -6,8 +6,6 @@ const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-const DAYS = ["PON", "UTO", "STR", "STV", "PIA", "SOB", "NED"];
-
 function normalizeText(value: string) {
   return String(value || "")
     .toLowerCase()
@@ -22,9 +20,9 @@ function normalizeDay(value: string) {
   const v = normalizeText(value).toUpperCase();
 
   if (v.includes("PON")) return "PON";
-  if (v.includes("UTO") || v === "UT") return "UTO";
+  if (v.includes("UTO")) return "UTO";
   if (v.includes("STR")) return "STR";
-  if (v.includes("STV") || v.includes("ST")) return "STV";
+  if (v.includes("STV") || v.includes("STV")) return "STV";
   if (v.includes("PIA")) return "PIA";
   if (v.includes("SOB")) return "SOB";
   if (v.includes("NED")) return "NED";
@@ -34,6 +32,7 @@ function normalizeDay(value: string) {
 
 function normalizeQty(value: string) {
   const raw = String(value || "").trim().toUpperCase();
+
   const number =
     raw.match(/[0-9]+([,.][0-9]+)?/)?.[0]?.replace(",", ".") || "";
 
@@ -58,12 +57,18 @@ function loadProducts() {
     .map((line) => {
       const [kod, ...nameParts] = line.split(/\s+/);
       const nazov = nameParts.join(" ");
-      return { kod, nazov, search: normalizeText(nazov) };
+
+      return {
+        kod,
+        nazov,
+        search: normalizeText(nazov)
+      };
     });
 }
 
 function findProduct(productName: string, products: any[]) {
   const q = normalizeText(productName);
+
   if (!q) return null;
 
   let best = null;
@@ -71,6 +76,7 @@ function findProduct(productName: string, products: any[]) {
 
   for (const p of products) {
     let score = 0;
+
     if (p.search.includes(q)) score += 10;
 
     for (const w of q.split(" ").filter((w) => w.length > 2)) {
@@ -94,6 +100,7 @@ function extractJson(raw: string) {
 
   const start = text.indexOf("[");
   const end = text.lastIndexOf("]");
+
   if (start === -1 || end === -1) return [];
 
   try {
@@ -106,15 +113,24 @@ function extractJson(raw: string) {
 export async function POST(req: Request) {
   try {
     const form = await req.formData();
+
     const image = form.get("image") as File | null;
     const selectedDay = normalizeDay(String(form.get("day") || ""));
 
+    console.log("SELECTED_DAY =", selectedDay);
+
     if (!image) {
-      return Response.json({ ok: false, error: "NO_IMAGE" });
+      return Response.json({
+        ok: false,
+        error: "NO_IMAGE"
+      });
     }
 
     if (!selectedDay) {
-      return Response.json({ ok: false, error: "NO_DAY_SELECTED" });
+      return Response.json({
+        ok: false,
+        error: "NO_DAY_SELECTED"
+      });
     }
 
     const bytes = await image.arrayBuffer();
@@ -130,28 +146,24 @@ export async function POST(req: Request) {
             {
               type: "text",
               text: `
-Si presný OCR kontrolór pre kuchynský objednávkový hárok.
+Si OCR pre kuchynské objednávky.
 
-Na fotke je tabuľka so stĺpcami v tomto poradí:
+Na fotke je objednávkový hárok tabuľka so stĺpcami:
 názov | dodávateľ | kód | PON | UTO | STR | ŠTV | PIA | SOB | NED
 
 ZVOLENÝ DEŇ: ${selectedDay}
 
-Tvoja úloha:
-1. Najprv si vizuálne nájdi hlavičku dní: PON, UTO, STR, ŠTV, PIA, SOB, NED.
-2. Urči vertikálne hranice stĺpca ${selectedDay}.
-3. Čítaj IBA ručné zápisy fyzicky napísané vo vnútri stĺpca ${selectedDay}.
-4. Všetko mimo stĺpca ${selectedDay} ignoruj, aj keď je to ručne napísané.
-5. Ak je stĺpec ${selectedDay} prázdny, vráť presne [].
+Najdôležitejšie pravidlo:
+ČÍTAJ IBA STĹPEC ${selectedDay}.
 
-Dôležité:
-- Nevracaj PON hodnoty, keď je zvolený UTO.
-- Nevracaj STR hodnoty, keď je zvolený UTO.
-- Nikdy nepresúvaj hodnotu z jedného dňa do druhého.
-- Pole "den" musí byť fyzický stĺpec, kde zápis leží.
-- Ak si nie si istý, že zápis je v stĺpci ${selectedDay}, vynechaj ho.
+Postup:
+1. Nájdi hlavičku dní: PON, UTO, STR, ŠTV, PIA, SOB, NED.
+2. Urči, kde je stĺpec ${selectedDay}.
+3. Čítaj iba ručne perom dopísané hodnoty vo vnútri stĺpca ${selectedDay}.
+4. Ak je v stĺpci ${selectedDay} prázdno, vráť [].
+5. Hodnoty v iných stĺpcoch ignoruj.
 
-Vráť iba čistý JSON array bez komentára.
+Vráť iba čistý JSON array.
 
 Formát:
 [
@@ -163,8 +175,17 @@ Formát:
   }
 ]
 
-Ak pre ${selectedDay} nič nie je, vráť:
-[]
+Pravidlá:
+- den musí byť vždy fyzický stĺpec, kde je hodnota napísaná
+- ak je hodnota v PON a zvolený deň je UTO, NEVRACAJ ju
+- ak je hodnota v STR a zvolený deň je UTO, NEVRACAJ ju
+- nikdy nepresúvaj hodnoty medzi dňami
+- čítaj iba ručne dopísaný text
+- názov produktu ber z ľavého riadku
+- kód produktu ber z rovnakého riadku, ak je vytlačený
+- 5,5KG nechaj ako 5,5KG
+- 1BAL nechaj ako 1BAL
+- 20KS nechaj ako 20KS
 `
             },
             {
@@ -181,10 +202,15 @@ Ak pre ${selectedDay} nič nie je, vráť:
     const raw = ai.choices[0].message.content || "";
     const parsed = extractJson(raw);
 
+    console.log("RAW_AI =", raw);
+    console.log("PARSED =", parsed);
+
     const filtered = parsed.filter((item: any) => {
       const itemDay = normalizeDay(String(item.den || ""));
       return itemDay === selectedDay;
     });
+
+    console.log("FILTERED =", filtered);
 
     const products = loadProducts();
 
@@ -227,15 +253,22 @@ Ak pre ${selectedDay} nič nie je, vráť:
       .filter(Boolean)
       .join("\n");
 
+    console.log("ITEMS =", items);
+    console.log("CSV =", csv);
+
     return Response.json({
       ok: true,
       selectedDay,
       raw,
+      parsed,
+      filtered,
       items,
       csv
     });
 
   } catch (e: any) {
+    console.log("ERROR =", String(e));
+
     return Response.json({
       ok: false,
       error: String(e)
